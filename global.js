@@ -22,7 +22,7 @@
     
     "localhost",
     "127.0.0.1",
-    "bagdown-payment.netlify.app",
+    "sixtow.netlify.app",
   ];
 
   if (
@@ -47,7 +47,7 @@
   );
 
   // --- Hosted Domain Detect ---
-  let hostedDomain = "https://bagdown-payment.netlify.app";
+  let hostedDomain = "https://sixtow.netlify.app";
   try {
     if (document.currentScript && document.currentScript.src) {
       const scriptUrl = new URL(document.currentScript.src);

@@ -416,68 +416,80 @@
   function handleShopPayment() {
     console.log(LOG_PREFIX + "Routing: /shop_payment");
 
+    // Early visual guard: hide bank-only fields while card is selected.
+    // For zero-flash behavior this CSS must ALSO be installed in Imweb HEAD.
+    function installPaymentGuard() {
+      if (document.getElementById('fnt-early-guard')) return;
+      const style = document.createElement('style');
+      style.id = 'fnt-early-guard';
+      style.textContent = `
+        body:not(.fnt-bank-selected) .css-1hw29i9,
+        body:not(.fnt-bank-selected) .moved-depositor-block,
+        body:not(.fnt-bank-selected) #fnt-depositor-area { display:none !important; }
+        body:not(.fnt-bank-selected) .fnt-bank-fields { display:none !important; }
+        .pay-method-custom {display:flex;flex-direction:column;gap:12px;margin:12px 0}
+        .pay-method-buttons {display:flex;gap:10px}
+        .pay-method-custom button {flex:1;padding:15px;border:1px solid #ddd;border-radius:8px;background:#fff;font-weight:700;cursor:pointer;font-size:16px}
+        .pay-method-custom button.active {border-color:#333;background:#333;color:#fff}
+        .pay-guide-text {font-size:13px;color:#666;line-height:1.5}
+        .pay-guide-red {color:#e60000;font-weight:700}
+        .pay-guide-blue {color:#0066ff;font-weight:700}
+        .moved-depositor-block {margin-top:10px;padding:10px;border:1px solid #eee;border-radius:6px;background:#fafafa}
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    let selectedMethod = 'CREDIT';
+    window.__fntPayMethod = 'CREDIT';
+    try { localStorage.setItem('payMethod', 'CreditCard'); } catch (e) {}
+    installPaymentGuard();
+
+    function getBankFields() {
+      const radio = Array.from(document.querySelectorAll('input[type="radio"]'))
+        .find(r => String(r.value || '').includes('OPM01'));
+      const depositorInput = document.querySelector('input[placeholder*="입금자명"],input[name="depositor"]');
+      const depositorBlock = document.querySelector('.css-1hw29i9') ||
+        (depositorInput && (depositorInput.closest('div[class*="css-"]') || depositorInput.parentElement));
+      const fieldset = radio && radio.closest('fieldset');
+      return { radio, depositorBlock, fieldset };
+    }
+
+    function enforceBankVisibility() {
+      const fields = getBankFields();
+      const isBank = selectedMethod === 'BANK';
+      if (document.body) document.body.classList.toggle('fnt-bank-selected', isBank);
+      if (fields.depositorBlock) {
+        fields.depositorBlock.classList.add('fnt-bank-fields');
+        fields.depositorBlock.style.setProperty('display', isBank ? 'flex' : 'none', 'important');
+        if (isBank) {
+          fields.depositorBlock.style.flexDirection = 'column';
+          fields.depositorBlock.style.gap = '8px';
+        }
+      }
+      // Hide the native Imweb payment method list, but keep its radio intact for submission.
+      if (fields.fieldset) {
+        fields.fieldset.style.setProperty('display', 'none', 'important');
+      }
+      return fields;
+    }
+
     function injectCustomPaymentUI() {
-      const timer = setInterval(() => {
-        const headers = Array.from(
-          document.querySelectorAll("header, h2, h3, .title, .css-17g8nhj")
-        );
-        const paymentHeader = headers.find((h) => {
-          const text = (h.innerText || "").replace(/\s/g, "");
-          return text.includes("결제수단");
-        });
-        if (!paymentHeader) return;
-
-        const paymentSection =
-          paymentHeader.closest('div[class*="css-"]') ||
-          paymentHeader.closest(".pay-method-section") ||
-          paymentHeader.parentElement;
-        if (!paymentSection) return;
-
-        if (paymentSection.querySelector(".pay-method-custom")) {
-          clearInterval(timer);
-          return;
-        }
-
-        const radios = Array.from(
-          document.querySelectorAll('input[type="radio"]')
-        );
-        const bankRadio = radios.find(
-          (r) => r.value && String(r.value).includes("OPM01")
-        );
-        if (!bankRadio) return;
-
-        if (!bankRadio.checked) bankRadio.click();
-
-        let depositorBlock = document.querySelector(".css-1hw29i9");
-        if (!depositorBlock) {
-          const input =
-            document.querySelector('input[placeholder*="입금자명"]') ||
-            document.querySelector('input[name="depositor"]');
-          if (input) {
-            depositorBlock = input.closest("div");
-            if (depositorBlock && depositorBlock.tagName === "LABEL")
-              depositorBlock = depositorBlock.parentElement;
-          }
-        }
-
-        const fieldset = bankRadio.closest("fieldset");
-
-        const customUI = document.createElement("div");
-        customUI.className = "pay-method-custom";
-        customUI.innerHTML = `
-          <style>
-            .pay-method-custom { display:flex; flex-direction:column; gap:12px; margin: 12px 0; }
-            .pay-method-buttons { display:flex; gap:10px; }
-            .pay-method-custom button{
-              flex:1; padding:15px; border:1px solid #ddd; border-radius:8px;
-              background:#fff; font-weight:700; cursor:pointer; font-size:16px;
-            }
-            .pay-method-custom button.active{ border-color:#333; background:#333; color:#fff; }
-            .pay-guide-text{ font-size:13px; color:#666; line-height:1.5; }
-            .pay-guide-text .pay-guide-red{ color:#e60000; font-weight:700; }
-            .pay-guide-text .pay-guide-blue{ color:#0066ff; font-weight:700; }
-            .moved-depositor-block{ margin-top:10px; padding:10px; border:1px solid #eee; border-radius:6px; background:#fafafa; }
-          </style>
+      if (!document.body) return;
+      const headers = Array.from(document.querySelectorAll('header,h1,h2,h3,h4,h5,h6,legend,label,span,div,p,strong'));
+      const paymentHeader = headers.find(el => {
+        if (el.closest('.pay-method-custom')) return false;
+        const own = Array.from(el.childNodes).filter(n => n.nodeType === 3)
+          .map(n => n.textContent).join('').replace(/\s/g, '');
+        const all = (el.textContent || '').replace(/\s/g, '');
+        return own === '결제수단' || own === '결제방법' ||
+          (el.matches('header,h1,h2,h3,h4,h5,h6,legend') &&
+           (all === '결제수단' || all === '결제방법'));
+      });
+      if (!paymentHeader) return;
+      if (document.querySelector('.pay-method-custom')) return;
+      const customUI = document.createElement('div');
+      customUI.className = 'pay-method-custom';
+      customUI.innerHTML = `
           <div class="pay-guide-text">
             * 아래 버튼을 눌러 결제수단을 선택해주세요.<br>
             <span class="pay-guide-red">* 카드결제시에도 계좌안내문자가 자동 발송됩니다.</span><br>
@@ -490,62 +502,46 @@
           <div class="pay-method-buttons">
             <button type="button" data-method="CREDIT" class="active">💳 카드결제</button>
             <button type="button" data-method="BANK">🏦 무통장입금</button>
-          </div>
-          <div id="fnt-depositor-area"></div>
-        `;
+          </div><div id="fnt-depositor-area"></div>`;
+      paymentHeader.insertAdjacentElement('afterend', customUI);
 
-        paymentHeader.insertAdjacentElement("afterend", customUI);
-
-        if (depositorBlock) {
-          depositorBlock.classList.add("moved-depositor-block");
-          const area = customUI.querySelector("#fnt-depositor-area");
-          if (area) area.appendChild(depositorBlock);
+      function setActive(method) {
+        selectedMethod = method === 'BANK' ? 'BANK' : 'CREDIT';
+        window.__fntPayMethod = selectedMethod;
+        customUI.querySelectorAll('button[data-method]').forEach(b =>
+          b.classList.toggle('active', b.dataset.method === selectedMethod));
+        try { localStorage.setItem('payMethod', selectedMethod === 'CREDIT' ? 'CreditCard' : 'BankTransfer'); }
+        catch (e) { console.warn(LOG_PREFIX + 'Storage unavailable:', e); }
+        const fields = enforceBankVisibility();
+        if (selectedMethod === 'BANK' && fields.radio && !fields.radio.checked) {
+          fields.radio.click(); // Imweb requires a native payment method for order submission.
         }
-
-        const area = customUI.querySelector("#fnt-depositor-area");
-        const moved = area && depositorBlock;
-        if (fieldset && moved) fieldset.style.display = "none";
-
-        function applyMethodUI(method) {
-          const stateMethod =
-            method === "CREDIT" ? "CreditCard" : "BankTransfer";
-          localStorage.setItem("payMethod", stateMethod);
-
-          if (method === "CREDIT") {
-            if (depositorBlock) depositorBlock.style.display = "none";
-          } else {
-            if (depositorBlock) {
-              depositorBlock.style.display = "flex";
-              depositorBlock.style.flexDirection = "column";
-              depositorBlock.style.gap = "8px";
-            }
-          }
-        }
-
-        const buttons = customUI.querySelectorAll("button[data-method]");
-        function setActive(method) {
-          buttons.forEach((b) => b.classList.remove("active"));
-          const btn = customUI.querySelector(`button[data-method="${method}"]`);
-          if (btn) btn.classList.add("active");
-          applyMethodUI(method);
-          saveCurrentState("Method Switch", method);
-        }
-
-        buttons.forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            const method = e.currentTarget.getAttribute("data-method");
-            console.log(LOG_PREFIX + "Method clicked:", method);
-            setActive(method);
-          });
-        });
-
-        localStorage.setItem("payMethod", "BankTransfer");
-        setActive("BANK");
-
-        console.log(LOG_PREFIX + "Custom Payment UI injected");
-        clearInterval(timer);
-      }, 400);
+        enforceBankVisibility();
+        saveCurrentState('Method Switch', selectedMethod);
+      }
+      customUI.querySelectorAll('button[data-method]').forEach(btn =>
+        btn.addEventListener('click', () => setActive(btn.dataset.method)));
+      setActive('CREDIT');
+      console.log(LOG_PREFIX + 'Safari-compatible card-first UI injected');
     }
+
+    // Imweb React can render/re-render the bank fields after initial load.
+    let refreshPending = false;
+    function refreshPaymentUI() {
+      if (refreshPending) return;
+      refreshPending = true;
+      setTimeout(() => {
+        refreshPending = false;
+        try { injectCustomPaymentUI(); enforceBankVisibility(); }
+        catch (e) { console.warn(LOG_PREFIX + 'Payment UI refresh failed:', e); }
+      }, 40);
+    }
+    refreshPaymentUI();
+    if (document.readyState === 'loading')
+      document.addEventListener('DOMContentLoaded', refreshPaymentUI, {once:true});
+    const paymentObserver = new MutationObserver(refreshPaymentUI);
+    paymentObserver.observe(document.documentElement, {childList:true,subtree:true});
+    setInterval(refreshPaymentUI, 600);
 
     function saveCurrentState(source = "Manual", overrideMethod = null) {
       // ✅ 모든 추출은 try-catch로 보호 (오류 나도 결제 진행)
@@ -601,12 +597,13 @@
       let method = overrideMethod;
       if (!method) {
         try {
-          const uiState = localStorage.getItem("payMethod");
+          const uiState = window.__fntPayMethod === "CREDIT" ? "CreditCard" :
+            window.__fntPayMethod === "BANK" ? "BankTransfer" : localStorage.getItem("payMethod");
           if (uiState === "CreditCard") method = "CREDIT";
           else if (uiState === "BankTransfer") method = "BANK";
-          else method = "BANK";
+          else method = "CREDIT";
         } catch (e) {
-          method = "BANK";
+          method = "CREDIT";
         }
       }
 
@@ -640,7 +637,7 @@
       return paymentData;
     }
 
-    window.addEventListener("load", function () {
+    function onPaymentPageReady() {
       // ✅ 주문자 정보 input 이벤트
       try {
         ["ordererName", "ordererCall", "ordererEmail"].forEach((name) => {
@@ -705,13 +702,10 @@
         },
         true
       );
-    });
-
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", injectCustomPaymentUI);
-    } else {
-      injectCustomPaymentUI();
     }
+    if (document.readyState === 'complete') onPaymentPageReady();
+    else window.addEventListener('load', onPaymentPageReady, {once:true});
+
   }
 
   // ---------------- /shop_payment_complete ----------------
@@ -719,7 +713,7 @@
   function handleShopPaymentComplete() {
     console.log(LOG_PREFIX + "Routing: /shop_payment_complete");
 
-    window.addEventListener("load", function () {
+    function onCompletePageReady() {
       const urlOrderNo = getURLParam("order_no");
 
       let stored = null;
@@ -772,7 +766,9 @@
       } else {
         console.log(LOG_PREFIX + "BANK intent or unknown -> no auto payment");
       }
-    });
+    }
+    if (document.readyState === 'complete') onCompletePageReady();
+    else window.addEventListener('load', onCompletePageReady, {once:true});
   }
 
   // ---------------- Router ----------------

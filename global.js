@@ -185,7 +185,7 @@
 
       // 3순위: "배송 정보" 섹션 안에서 첫 번째 텍스트 input
       try {
-        const allHeaders = document.querySelectorAll("*");
+        const allHeaders = document.querySelectorAll("section,header,h1,h2,h3,h4,legend,label,strong");
         for (const h of allHeaders) {
           const text = ((h.innerText || "") + "").replace(/\s/g, "");
           if (
@@ -234,11 +234,15 @@
   /**
    * ✅ "총 주문금액" 옆 span 값만 읽는다.
    */
+  let cachedTotalLabel = null;
   function findTotalOrderAmountStrict() {
     try {
-      const labelSpans = Array.from(document.querySelectorAll("span")).filter(
-        (s) => (s.innerText || "").trim() === "총 주문금액"
-      );
+      const labelSpans = cachedTotalLabel && cachedTotalLabel.isConnected
+        ? [cachedTotalLabel]
+        : Array.from(document.querySelectorAll("span")).filter(
+            (s) => (s.innerText || "").trim() === "총 주문금액"
+          );
+      if (labelSpans.length) cachedTotalLabel = labelSpans[0];
 
       for (const label of labelSpans) {
         const next = label.nextElementSibling;
@@ -300,7 +304,7 @@
   }
 
   function executePay(params) {
-    console.log(LOG_PREFIX + "Calling MARU.pay", params);
+    console.log(LOG_PREFIX + "Calling MARU.pay");
 
     setTimeout(function () {
       if (typeof MARU === "undefined") {
@@ -377,7 +381,7 @@
         console.error(LOG_PREFIX + "MARU.pay call failed:", err);
         alert("결제창을 여는 중 오류가 발생했습니다. 다시 시도해 주세요.");
       }
-    }, 250);
+    }, typeof MARU !== "undefined" ? 0 : 250);
   }
 
   window.paymentResultByJS = function (data) {
@@ -539,10 +543,15 @@
     refreshPaymentUI();
     if (document.readyState === 'loading')
       document.addEventListener('DOMContentLoaded', refreshPaymentUI, {once:true});
-    const paymentObserver = new MutationObserver(refreshPaymentUI);
+    const paymentObserver = new MutationObserver((records) => {
+      if (records.some(r => r.addedNodes.length || r.removedNodes.length)) refreshPaymentUI();
+    });
     paymentObserver.observe(document.documentElement, {childList:true,subtree:true});
-    setInterval(refreshPaymentUI, 600);
+    setInterval(() => {
+      if (!document.querySelector(".pay-method-custom")) refreshPaymentUI();
+    }, 2000);
 
+    let lastSavedPaymentData = null;
     function saveCurrentState(source = "Manual", overrideMethod = null) {
       // ✅ 모든 추출은 try-catch로 보호 (오류 나도 결제 진행)
       let ordererName = "";
@@ -621,15 +630,14 @@
       };
 
       try {
-        localStorage.setItem("fintree_pay_data", JSON.stringify(paymentData));
+        const serialized = JSON.stringify(paymentData);
+        if (serialized !== lastSavedPaymentData) {
+          localStorage.setItem("fintree_pay_data", serialized);
+          lastSavedPaymentData = serialized;
+        }
       } catch (e) {
         console.warn(LOG_PREFIX + "localStorage.setItem failed:", e);
       }
-
-      console.log(
-        LOG_PREFIX + `Saved fintree_pay_data [${source}] =>`,
-        paymentData
-      );
 
       if (!totalAmount || totalAmount === "0") {
         console.warn(LOG_PREFIX + "Amount not found => 0 (blocked)");
@@ -678,7 +686,7 @@
             saveCurrentState("Timer");
           } catch (e) {}
         }
-      }, 1000);
+      }, 3000);
 
       // On "결제하기" click: save then allow Imweb submit
       document.addEventListener(
@@ -703,8 +711,8 @@
         true
       );
     }
-    if (document.readyState === 'complete') onPaymentPageReady();
-    else window.addEventListener('load', onPaymentPageReady, {once:true});
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onPaymentPageReady, {once:true});
+    else onPaymentPageReady();
 
   }
 
@@ -742,7 +750,7 @@
           limitItemName((stored && stored.itemName) || "상품") || "상품",
       };
 
-      console.log(LOG_PREFIX + "Final params:", params);
+      console.log(LOG_PREFIX + "Payment params ready");
 
       if (!params.amount || params.amount === "0") {
         alert(
@@ -767,8 +775,8 @@
         console.log(LOG_PREFIX + "BANK intent or unknown -> no auto payment");
       }
     }
-    if (document.readyState === 'complete') onCompletePageReady();
-    else window.addEventListener('load', onCompletePageReady, {once:true});
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onCompletePageReady, {once:true});
+    else onCompletePageReady();
   }
 
   // ---------------- Router ----------------
